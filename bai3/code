@@ -1,0 +1,313 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Drawing;
+using System.Linq;
+using System.Windows.Forms;
+
+namespace HospitalMDIManager
+{
+    // =========================================================================
+    // 1. FORM CHA MDI (frmHospitalMain)
+    // =========================================================================
+    public partial class frmHospitalMain : Form
+    {
+        private MenuStrip menuStrip;
+        private StatusStrip statusStrip;
+        private ToolStripStatusLabel lblUserStatus;
+        private ToolStripProgressBar progressBar;
+
+        public frmHospitalMain()
+        {
+            InitializeComponentCustom();
+        }
+
+        private void InitializeComponentCustom()
+        {
+            this.Text = "Hệ thống MDI Quản lý Bệnh viện & Truy xuất Hồ sơ Bệnh án";
+            this.Size = new Size(1200, 800);
+            this.StartPosition = FormStartPosition.CenterScreen;
+
+            // Đặt Form thành MDI Container
+            this.IsMdiContainer = true;
+
+            // --- 1. MENU STRIP ---
+            menuStrip = new MenuStrip();
+
+            // Menu Hệ thống
+            ToolStripMenuItem menuSystem = new ToolStripMenuItem("Hệ thống");
+            ToolStripMenuItem menuLogout = new ToolStripMenuItem("Đăng xuất", null, (s, e) => Logout());
+            ToolStripMenuItem menuReload = new ToolStripMenuItem("Nạp lại dữ liệu", null, (s, e) => ReloadData());
+            ToolStripMenuItem menuExit = new ToolStripMenuItem("Thoát", null, (s, e) => Application.Exit());
+            menuSystem.DropDownItems.AddRange(new ToolStripItem[] { menuLogout, menuReload, new ToolStripSeparator(), menuExit });
+
+            // Menu Quản lý
+            ToolStripMenuItem menuManagement = new ToolStripMenuItem("Quản lý");
+            ToolStripMenuItem menuPatientProfiles = new ToolStripMenuItem("Hồ sơ Bệnh nhân", null, (s, e) => OpenChildForm<frmPatientProfiles>());
+            ToolStripMenuItem menuDoctorSchedule = new ToolStripMenuItem("Lịch trực Bác sĩ", null, (s, e) => OpenChildForm<frmDoctorSchedule>());
+            ToolStripMenuItem menuDepartments = new ToolStripMenuItem("Danh mục Khoa/Phòng", null, (s, e) => OpenChildForm<frmDepartmentList>());
+            menuManagement.DropDownItems.AddRange(new ToolStripItem[] { menuPatientProfiles, menuDoctorSchedule, menuDepartments });
+
+            // Menu Cửa sổ (Điều hướng và Sắp xếp MDI)
+            ToolStripMenuItem menuWindow = new ToolStripMenuItem("Cửa sổ");
+            ToolStripMenuItem menuCascade = new ToolStripMenuItem("Xếp tầng (Cascade)", null, (s, e) => this.LayoutMdi(MdiLayout.Cascade));
+            ToolStripMenuItem menuTileHorizontal = new ToolStripMenuItem("Xếp ngang (Tile Horizontal)", null, (s, e) => this.LayoutMdi(MdiLayout.TileHorizontal));
+            ToolStripMenuItem menuTileVertical = new ToolStripMenuItem("Xếp dọc (Tile Vertical)", null, (s, e) => this.LayoutMdi(MdiLayout.TileVertical));
+            ToolStripMenuItem menuCloseAll = new ToolStripMenuItem("Đóng tất cả", null, (s, e) => CloseAllChildForms());
+            menuWindow.DropDownItems.AddRange(new ToolStripItem[] { menuCascade, menuTileHorizontal, menuTileVertical, new ToolStripSeparator(), menuCloseAll });
+
+            menuStrip.Items.AddRange(new ToolStripItem[] { menuSystem, menuManagement, menuWindow });
+            this.MainMenuStrip = menuStrip;
+            this.Controls.Add(menuStrip);
+
+            // --- 2. STATUS STRIP ---
+            statusStrip = new StatusStrip();
+            lblUserStatus = new ToolStripStatusLabel("Bác sĩ trực: BS. CKI. Nguyễn Văn Minh | Khoa Cấp cứu  |  ");
+            progressBar = new ToolStripProgressBar { Value = 100, Width = 150, Visible = true };
+
+            statusStrip.Items.AddRange(new ToolStripItem[] { lblUserStatus, progressBar });
+            this.Controls.Add(statusStrip);
+        }
+
+        // --- HÀM NGHỆP VỤ: MỞ FORM CON VÀ CHỐNG MỞ LẶP LAI (DUPLICATE) ---
+        private void OpenChildForm<T>() where T : Form, new()
+        {
+            // Duyệt qua danh sách MdiChildren hiện tại
+            foreach (Form child in this.MdiChildren)
+            {
+                // Nếu Form kiểu T đã được mở -> Kích hoạt Form đó lên trên cùng
+                if (child is T)
+                {
+                    child.Activate();
+                    if (child.WindowState == FormWindowState.Minimized)
+                    {
+                        child.WindowState = FormWindowState.Normal;
+                    }
+                    return;
+                }
+            }
+
+            // Nếu Form chưa mở -> Khởi tạo Instance mới, gán MdiParent = this và Show()
+            T newChildForm = new T
+            {
+                MdiParent = this
+            };
+            newChildForm.Show();
+        }
+
+        // Đóng tất cả cửa sổ con
+        private void CloseAllChildForms()
+        {
+            foreach (Form child in this.MdiChildren)
+            {
+                child.Close();
+            }
+        }
+
+        private void Logout()
+        {
+            MessageBox.Show("Đã đăng xuất khỏi hệ thống thành công!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            CloseAllChildForms();
+        }
+
+        private void ReloadData()
+        {
+            progressBar.Value = 30;
+            System.Threading.Thread.Sleep(200);
+            progressBar.Value = 100;
+            MessageBox.Show("Nạp lại dữ liệu hệ thống thành công!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+    }
+
+
+    // =========================================================================
+    // 2. FORM CON 1: HỒ SƠ BỆNH NHÂN (frmPatientProfiles)
+    // =========================================================================
+    public class PatientModel
+    {
+        public string PatientId { get; set; } = string.Empty;
+        public string FullName { get; set; } = string.Empty;
+        public string Gender { get; set; } = string.Empty;
+        public int Age { get; set; }
+        public string Diagnosis { get; set; } = string.Empty;
+        public string Department { get; set; } = string.Empty;
+    }
+
+    public partial class frmPatientProfiles : Form
+    {
+        private BindingList<PatientModel> patientList = new BindingList<PatientModel>();
+        private BindingSource bindingSource = new BindingSource();
+        private DataGridView dgvPatients = null!;
+
+        public frmPatientProfiles()
+        {
+            InitializeComponentCustom();
+            LoadInitialData();
+        }
+
+        private void InitializeComponentCustom()
+        {
+            this.Text = "Quản lý Hồ sơ Bệnh nhân";
+            this.Size = new Size(800, 500);
+
+            TableLayoutPanel layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+            Label lblTitle = new Label
+            {
+                Text = "DANH SÁCH HỒ SƠ BỆNH NHÂN ĐANG ĐIỀU TRỊ",
+                Font = new Font("Segoe UI", 12f, FontStyle.Bold),
+                ForeColor = Color.DarkBlue,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Dock = DockStyle.Fill
+            };
+
+            dgvPatients = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                AutoGenerateColumns = false,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                ReadOnly = true,
+                MultiSelect = false,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
+            };
+
+            dgvPatients.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "PatientId", HeaderText = "Mã BN" });
+            dgvPatients.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "FullName", HeaderText = "Họ và Tên" });
+            dgvPatients.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Gender", HeaderText = "Giới tính" });
+            dgvPatients.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Age", HeaderText = "Tuổi" });
+            dgvPatients.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Diagnosis", HeaderText = "Chẩn đoán" });
+            dgvPatients.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Department", HeaderText = "Khoa điều trị" });
+
+            layout.Controls.Add(lblTitle, 0, 0);
+            layout.Controls.Add(dgvPatients, 0, 1);
+            this.Controls.Add(layout);
+        }
+
+        private void LoadInitialData()
+        {
+            patientList.Add(new PatientModel { PatientId = "BN101", FullName = "Trần Văn Hoàng", Gender = "Nam", Age = 45, Diagnosis = "Viêm ruột thừa cấp", Department = "Khoa Ngoại tổng hợp" });
+            patientList.Add(new PatientModel { PatientId = "BN102", FullName = "Lê Thị Ngọc", Gender = "Nữ", Age = 32, Diagnosis = "Sốt xuất huyết Dengue", Department = "Khoa Bệnh nhiệt đới" });
+            patientList.Add(new PatientModel { PatientId = "BN103", FullName = "Nguyễn Minh Tâm", Gender = "Nam", Age = 60, Diagnosis = "Tăng huyết áp độ 2", Department = "Khoa Tim mạch" });
+
+            bindingSource.DataSource = patientList;
+            dgvPatients.DataSource = bindingSource;
+        }
+    }
+
+
+    // =========================================================================
+    // 3. FORM CON 2: LỊCH TRỰC BÁC SĨ (frmDoctorSchedule)
+    // =========================================================================
+    public class DoctorScheduleModel
+    {
+        public string DoctorId { get; set; } = string.Empty;
+        public string DoctorName { get; set; } = string.Empty;
+        public string Speciality { get; set; } = string.Empty;
+        public string Shift { get; set; } = string.Empty;
+        public DateTime DutyDate { get; set; }
+    }
+
+    public partial class frmDoctorSchedule : Form
+    {
+        private BindingList<DoctorScheduleModel> scheduleList = new BindingList<DoctorScheduleModel>();
+        private BindingSource bindingSource = new BindingSource();
+        private DataGridView dgvSchedule = null!;
+
+        public frmDoctorSchedule()
+        {
+            InitializeComponentCustom();
+            LoadInitialData();
+        }
+
+        private void InitializeComponentCustom()
+        {
+            this.Text = "Danh mục & Lịch trực Bác sĩ";
+            this.Size = new Size(800, 500);
+
+            TableLayoutPanel layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+            Label lblTitle = new Label
+            {
+                Text = "LỊCH TRỰC BÁC SĨ BỆNH VIỆN - NÀY HÔM NAY",
+                Font = new Font("Segoe UI", 12f, FontStyle.Bold),
+                ForeColor = Color.DarkGreen,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Dock = DockStyle.Fill
+            };
+
+            dgvSchedule = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                AutoGenerateColumns = false,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                ReadOnly = true,
+                MultiSelect = false,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
+            };
+
+            dgvSchedule.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "DoctorId", HeaderText = "Mã BS" });
+            dgvSchedule.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "DoctorName", HeaderText = "Tên Bác sĩ" });
+            dgvSchedule.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Speciality", HeaderText = "Chuyên khoa" });
+            dgvSchedule.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Shift", HeaderText = "Ca trực" });
+            dgvSchedule.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "DutyDate", HeaderText = "Ngày trực", DefaultCellStyle = { Format = "dd/MM/yyyy" } });
+
+            layout.Controls.Add(lblTitle, 0, 0);
+            layout.Controls.Add(dgvSchedule, 0, 1);
+            this.Controls.Add(layout);
+        }
+
+        private void LoadInitialData()
+        {
+            scheduleList.Add(new DoctorScheduleModel { DoctorId = "BS01", DoctorName = "BS. CKI. Phạm Anh Tuấn", Speciality = "Cấp cứu", Shift = "Ca ngày (07h - 17h)", DutyDate = DateTime.Now });
+            scheduleList.Add(new DoctorScheduleModel { DoctorId = "BS02", DoctorName = "ThS. BS. Nguyễn Mai Hương", Speciality = "Nội khoa", Shift = "Ca đêm (17h - 07h)", DutyDate = DateTime.Now });
+            scheduleList.Add(new DoctorScheduleModel { DoctorId = "BS03", DoctorName = "BS. CKII. Vũ Hoàng Nam", Speciality = "Ngoại thần kinh", Shift = "Ca 24h", DutyDate = DateTime.Now });
+
+            bindingSource.DataSource = scheduleList;
+            dgvSchedule.DataSource = bindingSource;
+        }
+    }
+
+
+    // =========================================================================
+    // 4. FORM CON 3: DANH MỤC KHOA / PHÒNG (frmDepartmentList)
+    // =========================================================================
+    public partial class frmDepartmentList : Form
+    {
+        public frmDepartmentList()
+        {
+            this.Text = "Danh mục Khoa / Phòng";
+            this.Size = new Size(600, 400);
+
+            ListBox lstDept = new ListBox { Dock = DockStyle.Fill, Font = new Font("Segoe UI", 11f) };
+            lstDept.Items.AddRange(new string[] {
+                "1. Khoa Cấp cứu & Hồi sức tích cực",
+                "2. Khoa Ngoại tổng hợp",
+                "3. Khoa Bệnh nhiệt đới",
+                "4. Khoa Tim mạch & Khớp",
+                "5. Khoa Chẩn đoán hình ảnh",
+                "6. Khoa Xét nghiệm trung tâm"
+            });
+
+            this.Controls.Add(lstDept);
+        }
+    }
+
+
+    // =========================================================================
+    // 5. ĐIỂM KHỞI CHẠY ỨNG DỤNG
+    // =========================================================================
+    static class Program
+    {
+        [STAThread]
+        static void Main()
+        {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new frmHospitalMain());
+        }
+    }
+}
