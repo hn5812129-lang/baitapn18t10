@@ -1,0 +1,353 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Linq;
+using System.Text.RegularExpressions;
+using System.Windows.Forms;
+
+namespace GymMemberManager
+{
+    // Lớp dữ liệu Hội viên (MemberModel)
+    public class MemberModel : INotifyPropertyChanged
+    {
+        private string _memberId;
+        private string _fullName;
+        private string _phone;
+        private string _package;
+        private DateTime _startDate;
+        private decimal _fee;
+
+        public string MemberId
+        {
+            get => _memberId;
+            set { _memberId = value; OnPropertyChanged(nameof(MemberId)); }
+        }
+
+        public string FullName
+        {
+            get => _fullName;
+            set { _fullName = value; OnPropertyChanged(nameof(FullName)); }
+        }
+
+        public string Phone
+        {
+            get => _phone;
+            set { _phone = value; OnPropertyChanged(nameof(Phone)); }
+        }
+
+        public string Package
+        {
+            get => _package;
+            set { _package = value; OnPropertyChanged(nameof(Package)); }
+        }
+
+        public DateTime StartDate
+        {
+            get => _startDate;
+            set { _startDate = value; OnPropertyChanged(nameof(StartDate)); }
+        }
+
+        public decimal Fee
+        {
+            get => _fee;
+            set { _fee = value; OnPropertyChanged(nameof(Fee)); }
+        }
+
+        public event PropertyChangedEventHandler PropertyChanged;
+        protected void OnPropertyChanged(string propertyName)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+    }
+
+    public partial class frmGymMemberManager : Form
+    {
+        private BindingList<MemberModel> memberList;
+        private BindingSource bindingSource = new BindingSource();
+
+        // Các Controls trên giao diện
+        private TableLayoutPanel mainLayout;
+        private GroupBox grpInputs, grpControls;
+        private TextBox txtMemberId, txtFullName, txtPhone, txtFee;
+        private ComboBox cboPackage;
+        private DateTimePicker dtpStartDate;
+        private DataGridView dgvMembers;
+        private Button btnAdd, btnUpdate, btnDelete, btnClear;
+        private ErrorProvider errorProvider;
+
+        private int autoIdCounter = 1;
+
+        public frmGymMemberManager()
+        {
+            InitializeComponentCustom();
+            LoadInitialData();
+            GenerateNextMemberId();
+        }
+
+        private void InitializeComponentCustom()
+        {
+            this.Text = "Hệ thống Quản lý Dịch vụ Phòng Gym & Hội viên";
+            this.Size = new System.Drawing.Size(1000, 700);
+            this.StartPosition = FormStartPosition.CenterScreen;
+
+            errorProvider = new ErrorProvider();
+
+            // Main TableLayoutPanel
+            mainLayout = new TableLayoutPanel();
+            mainLayout.Dock = DockStyle.Fill;
+            mainLayout.ColumnCount = 1;
+            mainLayout.RowCount = 3;
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 220f)); // Khu vực nhập liệu
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 60f));  // Khu vực nút chức năng
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f)); // DataGridView
+            this.Controls.Add(mainLayout);
+
+            // --- VÙNG 1: THÔNG TIN HỘI VIÊN ---
+            grpInputs = new GroupBox { Text = "Thông tin chi tiết hội viên", Dock = DockStyle.Fill };
+            TableLayoutPanel inputPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 3, Padding = new Padding(5) };
+
+            inputPanel.Controls.Add(new Label { Text = "Mã hội viên:", Anchor = AnchorStyles.Left }, 0, 0);
+            txtMemberId = new TextBox { Dock = DockStyle.Fill, ReadOnly = true, BackColor = System.Drawing.Color.WhiteSmoke };
+            inputPanel.Controls.Add(txtMemberId, 1, 0);
+
+            inputPanel.Controls.Add(new Label { Text = "Họ và tên:", Anchor = AnchorStyles.Left }, 2, 0);
+            txtFullName = new TextBox { Dock = DockStyle.Fill };
+            inputPanel.Controls.Add(txtFullName, 3, 0);
+
+            inputPanel.Controls.Add(new Label { Text = "Số điện thoại:", Anchor = AnchorStyles.Left }, 0, 1);
+            txtPhone = new TextBox { Dock = DockStyle.Fill };
+            inputPanel.Controls.Add(txtPhone, 1, 1);
+
+            inputPanel.Controls.Add(new Label { Text = "Gói tập:", Anchor = AnchorStyles.Left }, 2, 1);
+            cboPackage = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
+            cboPackage.Items.AddRange(new string[] { "Theo tháng", "6 tháng", "1 năm" });
+            cboPackage.SelectedIndex = 0;
+            inputPanel.Controls.Add(cboPackage, 3, 1);
+
+            inputPanel.Controls.Add(new Label { Text = "Ngày đăng ký:", Anchor = AnchorStyles.Left }, 0, 2);
+            dtpStartDate = new DateTimePicker { Format = DateTimePickerFormat.Short, Dock = DockStyle.Fill };
+            inputPanel.Controls.Add(dtpStartDate, 1, 2);
+
+            inputPanel.Controls.Add(new Label { Text = "Phí dịch vụ:", Anchor = AnchorStyles.Left }, 2, 2);
+            txtFee = new TextBox { Dock = DockStyle.Fill };
+            inputPanel.Controls.Add(txtFee, 3, 2);
+
+            grpInputs.Controls.Add(inputPanel);
+            mainLayout.Controls.Add(grpInputs, 0, 0);
+
+            // --- VÙNG 2: CHỨC NĂNG (Nút bấm) ---
+            grpControls = new GroupBox { Text = "Thanh công cụ", Dock = DockStyle.Fill };
+            FlowLayoutPanel btnPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(5) };
+
+            btnAdd = new Button { Text = "Thêm mới", Width = 100, Height = 30 };
+            btnUpdate = new Button { Text = "Sửa thông tin", Width = 100, Height = 30 };
+            btnDelete = new Button { Text = "Xóa hội viên", Width = 100, Height = 30 };
+            btnClear = new Button { Text = "Làm mới", Width = 100, Height = 30 };
+
+            btnAdd.Click += BtnAdd_Click;
+            btnUpdate.Click += BtnUpdate_Click;
+            btnDelete.Click += BtnDelete_Click;
+            btnClear.Click += BtnClear_Click;
+
+            btnPanel.Controls.AddRange(new Control[] { btnAdd, btnUpdate, btnDelete, btnClear });
+            grpControls.Controls.Add(btnPanel);
+            mainLayout.Controls.Add(grpControls, 0, 1);
+
+            // --- VÙNG 3: LƯỚI HIỂN THỊ (DATAGRIDVIEW) ---
+            dgvMembers = new DataGridView();
+            dgvMembers.Dock = DockStyle.Fill;
+            dgvMembers.AutoGenerateColumns = false; // Tuyệt đối không tự sinh cột
+            dgvMembers.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            dgvMembers.ReadOnly = true;
+            dgvMembers.MultiSelect = false;
+            dgvMembers.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+
+            // Khai báo cột thủ công qua code C# và gán DataPropertyName chính xác
+            dgvMembers.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "MemberId", HeaderText = "Mã HV", Width = 80 });
+            dgvMembers.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "FullName", HeaderText = "Tên hội viên" });
+            dgvMembers.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Phone", HeaderText = "SĐT" });
+            dgvMembers.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Package", HeaderText = "Gói tập" });
+            dgvMembers.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "StartDate", HeaderText = "Ngày ĐK", DefaultCellStyle = { Format = "dd/MM/yyyy" } });
+            dgvMembers.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Fee", HeaderText = "Phí dịch vụ", DefaultCellStyle = { Format = "N0" } });
+
+            dgvMembers.CellClick += DgvMembers_CellClick;
+            mainLayout.Controls.Add(dgvMembers, 0, 2);
+        }
+
+        private void LoadInitialData()
+        {
+            var initialData = new List<MemberModel>
+            {
+                new MemberModel { MemberId = "HV001", FullName = "Nguyễn Văn An", Phone = "0901234567", Package = "Theo tháng", StartDate = DateTime.Now.AddDays(-10), Fee = 500000 },
+                new MemberModel { MemberId = "HV002", FullName = "Trần Thị Bình", Phone = "0987654321", Package = "6 tháng", StartDate = DateTime.Now.AddDays(-30), Fee = 2700000 }
+            };
+
+            memberList = new BindingList<MemberModel>(initialData);
+            bindingSource.DataSource = memberList;
+            dgvMembers.DataSource = bindingSource;
+
+            autoIdCounter = 3; // Tiếp tục sinh từ HV003
+        }
+
+        private void GenerateNextMemberId()
+        {
+            txtMemberId.Text = $"HV{autoIdCounter:D3}";
+        }
+
+        // Kiểm tra hợp lệ dữ liệu bằng ErrorProvider theo đúng yêu cầu nghiệp vụ
+        private bool ValidateInputs()
+        {
+            bool isValid = true;
+            errorProvider.Clear();
+
+            // 1. Tên hội viên không được để trống hoặc chứa ký tự đặc biệt
+            // Cho phép chữ cái tiếng Việt, khoảng trắng. Ký tự đặc biệt hoặc số sẽ báo lỗi.
+            string namePattern = @"^[a-zA-ZÀ-ỹ\s]+$";
+            if (string.IsNullOrWhiteSpace(txtFullName.Text))
+            {
+                errorProvider.SetError(txtFullName, "Tên hội viên không được để trống.");
+                isValid = false;
+            }
+            else if (!Regex.IsMatch(txtFullName.Text.Trim(), namePattern))
+            {
+                errorProvider.SetError(txtFullName, "Tên hội viên không được chứa ký tự đặc biệt hoặc số.");
+                isValid = false;
+            }
+
+            // 2. Số điện thoại phải đúng 10 chữ số (bắt đầu bằng số 0)
+            string phonePattern = @"^0\d{9}$";
+            if (string.IsNullOrWhiteSpace(txtPhone.Text) || !Regex.IsMatch(txtPhone.Text.Trim(), phonePattern))
+            {
+                errorProvider.SetError(txtPhone, "Số điện thoại phải đúng 10 chữ số và bắt đầu bằng số 0.");
+                isValid = false;
+            }
+
+            // 3. Phí dịch vụ phải là số nguyên dương
+            if (!decimal.TryParse(txtFee.Text.Trim(), out decimal fee) || fee <= 0 || fee % 1 != 0)
+            {
+                errorProvider.SetError(txtFee, "Phí dịch vụ phải là một số nguyên dương (> 0).");
+                isValid = false;
+            }
+
+            return isValid;
+        }
+
+        // Chức năng Thêm mới
+        private void BtnAdd_Click(object sender, EventArgs e)
+        {
+            if (!ValidateInputs()) return;
+
+            var newMember = new MemberModel
+            {
+                MemberId = txtMemberId.Text.Trim(),
+                FullName = txtFullName.Text.Trim().ToUpper(),
+                Phone = txtPhone.Text.Trim(),
+                Package = cboPackage.SelectedItem.ToString(),
+                StartDate = dtpStartDate.Value.Date,
+                Fee = decimal.Parse(txtFee.Text.Trim())
+            };
+
+            memberList.Add(newMember);
+            autoIdCounter++;
+            GenerateNextMemberId();
+            ClearInputFields(false); // Giữ lại mã mới sinh
+            MessageBox.Show("Thêm hội viên thành công!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        // Chức năng Sửa thông tin (Đồng bộ 2 chiều tự động)
+        private void BtnUpdate_Click(object sender, EventArgs e)
+        {
+            if (dgvMembers.SelectedRows.Count == 0)
+            {
+                MessageBox.Show("Vui lòng chọn hội viên cần sửa trên lưới.", "Cảnh báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (!ValidateInputs()) return;
+
+            // Lấy trực tiếp đối tượng đang được Bind trên dòng được chọn
+            var selectedMember = (MemberModel)dgvMembers.SelectedRows[0].DataBoundItem;
+
+            // Thay đổi dữ liệu trực tiếp trên Model -> Tự động đồng bộ lên BindingList và cập nhật ngay lên lưới
+            selectedMember.FullName = txtFullName.Text.Trim();
+            selectedMember.Phone = txtPhone.Text.Trim();
+            selectedMember.Package = cboPackage.SelectedItem.ToString();
+            selectedMember.StartDate = dtpStartDate.Value.Date;
+            selectedMember.Fee = decimal.Parse(txtFee.Text.Trim());
+
+            // Làm mới hiển thị binding
+            bindingSource.ResetBindings(false);
+            MessageBox.Show("Cập nhật thông tin hội viên thành công!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        // Chức năng Xóa hội viên có hộp thoại xác nhận Yes/No (MessageBoxIcon.Warning)
+        private void BtnDelete_Click(object sender, EventArgs e)
+        {
+            if (dgvMembers.SelectedRows.Count == 0)
+            {
+                MessageBox.Show("Vui lòng chọn hội viên cần xóa trên lưới.", "Cảnh báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var confirmResult = MessageBox.Show(
+                "Bạn có chắc chắn muốn xóa hội viên này khỏi hệ thống?",
+                "Xác nhận xóa",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning
+            );
+
+            if (confirmResult == DialogResult.Yes)
+            {
+                var selectedMember = (MemberModel)dgvMembers.SelectedRows[0].DataBoundItem;
+                memberList.Remove(selectedMember);
+                ClearInputFields(true);
+                MessageBox.Show("Đã xóa hội viên thành công!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+
+        private void BtnClear_Click(object sender, EventArgs e)
+        {
+            ClearInputFields(true);
+            dgvMembers.ClearSelection();
+        }
+
+        private void ClearInputFields(bool resetId)
+        {
+            if (resetId) GenerateNextMemberId();
+            txtFullName.Clear();
+            txtPhone.Clear();
+            txtFee.Clear();
+            if (cboPackage.Items.Count > 0) cboPackage.SelectedIndex = 0;
+            dtpStartDate.Value = DateTime.Now;
+            errorProvider.Clear();
+        }
+
+        // Đồng bộ 2 chiều: Chọn dòng trên dgvMembers điền thông tin lên Control
+        private void DgvMembers_CellClick(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex >= 0)
+            {
+                var member = (MemberModel)dgvMembers.Rows[e.RowIndex].DataBoundItem;
+                txtMemberId.Text = member.MemberId;
+                txtFullName.Text = member.FullName;
+                txtPhone.Text = member.Phone;
+                cboPackage.SelectedItem = member.Package;
+                dtpStartDate.Value = member.StartDate;
+                txtFee.Text = member.Fee.ToString("0");
+                errorProvider.Clear();
+            }
+        }
+    }
+
+    // Điểm khởi chạy ứng dụng
+    static class Program
+    {
+        [STAThread]
+        static void Main()
+        {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new frmGymMemberManager());
+        }
+    }
+}
