@@ -1,0 +1,232 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Drawing;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace CryptoStockTickerApp
+{
+    // Lớp dữ liệu Nhật ký lịch sử biến động giá
+    public class PriceLogModel
+    {
+        public string TimeStamp { get; set; } = string.Empty;
+        public string Symbol { get; set; } = string.Empty;
+        public decimal Price { get; set; }
+        public string Trend { get; set; } = string.Empty; // Tăng / Giảm
+    }
+
+    public partial class frmCryptoStockTicker : Form
+    {
+        // Các Controls trên giao diện
+        private TableLayoutPanel mainLayout = null!;
+        private GroupBox grpControl = null!;
+        private GroupBox grpDisplay = null!;
+        private Button btnStart = null!;
+        private Button btnPause = null!;
+        private Label lblBTCPrice = null!;
+        private Label lblTitlePrice = null!;
+        private DataGridView dgvHistoryLog = null!;
+        private StatusStrip statusStrip = null!;
+        private ToolStripStatusLabel lblLastUpdate = null!;
+        private ToolStripStatusLabel lblSyncCount = null!;
+
+        // Danh sách hiển thị và Binding
+        private BindingList<PriceLogModel> historyList = new BindingList<PriceLogModel>();
+        private BindingSource bindingSource = new BindingSource();
+
+        // Quản lý tiến trình ngầm (Background Task & Cancellation)
+        private CancellationTokenSource? cts;
+        private decimal previousPrice = 65000.00m; // Giá khởi điểm giả định của BTC
+        private int successfulSyncCount = 0;
+        private Random random = new Random();
+
+        public frmCryptoStockTicker()
+        {
+            InitializeComponentCustom();
+        }
+
+        private void InitializeComponentCustom()
+        {
+            this.Text = "Mô phỏng Giám sát Tỷ giá Tài chính Thời gian Thực (Cross-Thread Safety)";
+            this.Size = new Size(950, 650);
+            this.StartPosition = FormStartPosition.CenterScreen;
+
+            // Main TableLayoutPanel
+            mainLayout = new TableLayoutPanel();
+            mainLayout.Dock = DockStyle.Fill;
+            mainLayout.ColumnCount = 1;
+            mainLayout.RowCount = 3;
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 80f));  // Khu vực điều khiển
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 140f)); // Khu vực hiển thị giá thời gian thực
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f)); // DataGridView nhật ký lịch sử
+            this.Controls.Add(mainLayout);
+
+            // StatusStrip ở đáy Form
+            statusStrip = new StatusStrip();
+            lblLastUpdate = new ToolStripStatusLabel("Lần cập nhật cuối: Chưa có  |  ");
+            lblSyncCount = new ToolStripStatusLabel("Số lượt đồng bộ thành công: 0");
+            statusStrip.Items.AddRange(new ToolStripItem[] { lblLastUpdate, lblSyncCount });
+            this.Controls.Add(statusStrip);
+
+            // --- 1. KHU VỰC ĐIỀU KHIỂN ---
+            grpControl = new GroupBox { Text = "Điều khiển hệ thống giám sát", Dock = DockStyle.Fill };
+            FlowLayoutPanel controlPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
+
+            btnStart = new Button { Text = "Bắt đầu Giám sát", Width = 140, Height = 32, BackColor = Color.LightGreen, FlatStyle = FlatStyle.Flat };
+            btnPause = new Button { Text = "Tạm dừng", Width = 110, Height = 32, Enabled = false, BackColor = Color.LightCoral, FlatStyle = FlatStyle.Flat };
+
+            btnStart.Click += BtnStart_Click;
+            btnPause.Click += BtnPause_Click;
+
+            controlPanel.Controls.AddRange(new Control[] { btnStart, btnPause });
+            grpControl.Controls.Add(controlPanel);
+            mainLayout.Controls.Add(grpControl, 0, 0);
+
+            // --- 2. KHU VỰC HIỂN THỊ THỜI GIAN THỰC (BTC/USD) ---
+            grpDisplay = new GroupBox { Text = "Chỉ số Biến động Giá Thời gian Thực", Dock = DockStyle.Fill };
+            TableLayoutPanel displayPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
+
+            lblTitlePrice = new Label { Text = "BTC / USD (Bitcoin)", Font = new Font("Segoe UI", 11f, FontStyle.Bold), TextAlign = ContentAlignment.MiddleCenter, Dock = DockStyle.Fill };
+            lblBTCPrice = new Label { Text = "$65,000.00", Font = new Font("Segoe UI", 26f, FontStyle.Bold), TextAlign = ContentAlignment.MiddleCenter, Dock = DockStyle.Fill, ForeColor = Color.Gray };
+
+            displayPanel.Controls.Add(lblTitlePrice, 0, 0);
+            displayPanel.Controls.Add(lblBTCPrice, 0, 1);
+            grpDisplay.Controls.Add(displayPanel);
+            mainLayout.Controls.Add(grpDisplay, 0, 1);
+
+            // --- 3. DATAGRIDVIEW NHẬT KÝ LỊCH SỬ ---
+            dgvHistoryLog = new DataGridView();
+            dgvHistoryLog.Dock = DockStyle.Fill;
+            dgvHistoryLog.AutoGenerateColumns = false;
+            dgvHistoryLog.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            dgvHistoryLog.ReadOnly = true;
+            dgvHistoryLog.MultiSelect = false;
+            dgvHistoryLog.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+
+            dgvHistoryLog.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "TimeStamp", HeaderText = "Thời gian quét", Width = 120 });
+            dgvHistoryLog.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Symbol", HeaderText = "Mã tài sản", Width = 100 });
+            dgvHistoryLog.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Price", HeaderText = "Tỷ giá (USD)", DefaultCellStyle = { Format = "N2" } });
+            dgvHistoryLog.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Trend", HeaderText = "Xu hướng biến động", Width = 120 });
+
+            bindingSource.DataSource = historyList;
+            dgvHistoryLog.DataSource = bindingSource;
+            mainLayout.Controls.Add(dgvHistoryLog, 0, 2);
+        }
+
+        // Sự kiện: Bắt đầu giám sát (Khởi chạy Task ngầm lặp vô hạn định kỳ 2 giây)
+        private void BtnStart_Click(object? sender, EventArgs e)
+        {
+            btnStart.Enabled = false;
+            btnPause.Enabled = true;
+
+            cts = new CancellationTokenSource();
+            var token = cts.Token;
+
+            // Khởi chạy tiến trình ngầm bằng Task.Run
+            Task.Run(async () =>
+            {
+                while (!token.IsCancellationRequested)
+                {
+                    try
+                    {
+                        // 1. Sinh ngẫu nhiên tỷ giá mới từ Background Thread
+                        decimal delta = (decimal)(random.NextDouble() * 200 - 98); // Biến động tăng giảm trong khoảng [-98, 102]
+                        decimal newPrice = previousPrice + delta;
+                        string trend = newPrice >= previousPrice ? "Tăng 📈" : "Giảm 📉";
+                        string timeString = DateTime.Now.ToString("HH:mm:ss");
+
+                        // 2. TUÂN THỦ THREAD SAFETY: Kiểm tra InvokeRequired và sử dụng Invoke để cập nhật UI an toàn
+                        if (this.InvokeRequired)
+                        {
+                            this.Invoke(new Action(() =>
+                            {
+                                UpdateUIRealtime(newPrice, timeString, trend);
+                            }));
+                        }
+                        else
+                        {
+                            UpdateUIRealtime(newPrice, timeString, trend);
+                        }
+
+                        previousPrice = newPrice;
+
+                        // Chờ 2 giây trước lần quét tiếp theo
+                        await Task.Delay(2000, token);
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        // Bắt ngoại lệ khi hủy Task an toàn
+                        break;
+                    }
+                }
+            }, token);
+        }
+
+        // Sự kiện: Tạm dừng giám sát
+        private void BtnPause_Click(object? sender, EventArgs e)
+        {
+            if (cts != null)
+            {
+                cts.Cancel();
+                cts.Dispose();
+                cts = null;
+            }
+
+            btnStart.Enabled = true;
+            btnPause.Enabled = false;
+            lblBTCPrice.ForeColor = Color.Gray;
+            lblBTCPrice.Text += " (Đã tạm dừng)";
+        }
+
+        // Hàm cập nhật giao diện trực tiếp trên Main UI Thread (Được gọi an toàn thông qua Invoke)
+        private void UpdateUIRealtime(decimal price, string timeStr, string trend)
+        {
+            // Đổi màu Label theo xu hướng giá: Xanh nếu tăng, Đỏ nếu giảm
+            if (price >= previousPrice)
+            {
+                lblBTCPrice.ForeColor = Color.ForestGreen; // Xanh khi tăng
+            }
+            else
+            {
+                lblBTCPrice.ForeColor = Color.Crimson;     // Đỏ khi giảm
+            }
+
+            lblBTCPrice.Text = $"${price:N2}";
+
+            // Cập nhật StatusStrip
+            successfulSyncCount++;
+            lblLastUpdate.Text = $"Lần cập nhật cuối: {timeStr}  |  ";
+            lblSyncCount.Text = $"Số lượt đồng bộ thành công: {successfulSyncCount}";
+
+            // Ghi nhận nhật ký lịch sử vào DataGridView qua BindingList
+            historyList.Insert(0, new PriceLogModel
+            {
+                TimeStamp = timeStr,
+                Symbol = "BTC/USD",
+                Price = price,
+                Trend = trend
+            });
+
+            // Giới hạn lịch sử tối đa 50 dòng để tránh tràn bộ nhớ nếu chạy lâu
+            if (historyList.Count > 50)
+            {
+                historyList.RemoveAt(historyList.Count - 1);
+            }
+        }
+    }
+
+    // Điểm khởi chạy ứng dụng
+    static class Program
+    {
+        [STAThread]
+        static void Main()
+        {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new frmCryptoStockTicker());
+        }
+    }
+}
