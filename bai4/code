@@ -1,0 +1,276 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Drawing;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace RevenueAnalyticsApp
+{
+    // Lớp dữ liệu Giao dịch doanh thu
+    public class RevenueTransaction
+    {
+        public string TransactionId { get; set; } = string.Empty; // Mã giao dịch
+        public DateTime TransactionDate { get; set; }            // Ngày giao dịch
+        public string BranchName { get; set; } = string.Empty;   // Chi nhánh
+        public string CustomerName { get; set; } = string.Empty; // Khách hàng
+        public decimal Amount { get; set; }                       // Số tiền
+        public string PaymentMethod { get; set; } = string.Empty; // Phương thức thanh toán
+    }
+
+    // Class báo cáo tiến độ công việc
+    public class ProgressReport
+    {
+        public int Percentage { get; set; }
+        public string StatusMessage { get; set; } = string.Empty;
+    }
+
+    public partial class frmRevenueAnalytics : Form
+    {
+        // Controls trên giao diện
+        private TableLayoutPanel mainLayout = null!;
+        private GroupBox grpCriteria = null!;
+        private GroupBox grpStatus = null!;
+        private DateTimePicker dtpFromDate = null!;
+        private DateTimePicker dtpToDate = null!;
+        private ComboBox cmbBranch = null!;
+        private Button btnAnalyze = null!;
+        private Button btnCancel = null!;
+        private ProgressBar pgbLoading = null!;
+        private Label lblProcessingStatus = null!;
+        private DataGridView dgvRevenueData = null!;
+
+        private BindingList<RevenueTransaction> resultList = new BindingList<RevenueTransaction>();
+        private BindingSource bindingSource = new BindingSource();
+
+        // Quản lý việc hủy tác vụ bất đồng bộ
+        private CancellationTokenSource? cts;
+
+        public frmRevenueAnalytics()
+        {
+            InitializeComponentCustom();
+        }
+
+        private void InitializeComponentCustom()
+        {
+            this.Text = "Bảng điều khiển Thống kê Doanh thu Multi-Threading (Async/Await)";
+            this.Size = new Size(1000, 700);
+            this.StartPosition = FormStartPosition.CenterScreen;
+
+            // Main TableLayoutPanel
+            mainLayout = new TableLayoutPanel();
+            mainLayout.Dock = DockStyle.Fill;
+            mainLayout.ColumnCount = 1;
+            mainLayout.RowCount = 3;
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 100f)); // Khu vực tiêu chí
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 70f));  // Khu vực tiến độ
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f)); // DataGridView
+            this.Controls.Add(mainLayout);
+
+            // --- VÙNG 1: TIÊU CHÍ LỌC & NÚT THAO TÁC ---
+            grpCriteria = new GroupBox { Text = "Tiêu chí thống kê", Dock = DockStyle.Fill };
+            FlowLayoutPanel criteriaPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(5) };
+
+            dtpFromDate = new DateTimePicker { Format = DateTimePickerFormat.Short, Width = 110, Value = DateTime.Now.AddDays(-30) };
+            dtpToDate = new DateTimePicker { Format = DateTimePickerFormat.Short, Width = 110, Value = DateTime.Now };
+
+            cmbBranch = new ComboBox { Width = 160, DropDownStyle = ComboBoxStyle.DropDownList };
+            cmbBranch.Items.AddRange(new string[] { "Tất cả chi nhánh", "Chi nhánh Hà Nội", "Chi nhánh TP.HCM", "Chi nhánh Đà Nẵng", "Chi nhánh Cần Thơ" });
+            cmbBranch.SelectedIndex = 0;
+
+            btnAnalyze = new Button { Text = "Thống Kê Doanh Thu", Width = 150, Height = 30, BackColor = Color.LightSkyBlue, FlatStyle = FlatStyle.Flat };
+            btnCancel = new Button { Text = "Hủy Thao Tác", Width = 110, Height = 30, Enabled = false, BackColor = Color.MistyRose, FlatStyle = FlatStyle.Flat };
+
+            btnAnalyze.Click += BtnAnalyze_Click;
+            btnCancel.Click += BtnCancel_Click;
+
+            criteriaPanel.Controls.AddRange(new Control[] {
+                new Label { Text = "Từ ngày:", Padding = new Padding(0, 6, 0, 0) }, dtpFromDate,
+                new Label { Text = "Đến ngày:", Padding = new Padding(10, 6, 0, 0) }, dtpToDate,
+                new Label { Text = "Chi nhánh:", Padding = new Padding(10, 6, 0, 0) }, cmbBranch,
+                btnAnalyze, btnCancel
+            });
+
+            grpCriteria.Controls.Add(criteriaPanel);
+            mainLayout.Controls.Add(grpCriteria, 0, 0);
+
+            // --- VÙNG 2: TIẾN ĐỘ VÀ TRẠNG THÁI (PROGRESSBAR & LABEL) ---
+            grpStatus = new GroupBox { Text = "Trạng thái tiến trình", Dock = DockStyle.Fill };
+            TableLayoutPanel statusPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(5) };
+
+            pgbLoading = new ProgressBar { Dock = DockStyle.Fill, Minimum = 0, Maximum = 100, Value = 0 };
+            lblProcessingStatus = new Label { Text = "Sẵn sàng thực hiện thống kê.", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.DarkGray };
+
+            statusPanel.Controls.Add(pgbLoading, 0, 0);
+            statusPanel.Controls.Add(lblProcessingStatus, 0, 1);
+            grpStatus.Controls.Add(statusPanel);
+            mainLayout.Controls.Add(grpStatus, 0, 1);
+
+            // --- VÙNG 3: DATAGRIDVIEW KẾT QUẢ ---
+            dgvRevenueData = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                AutoGenerateColumns = false,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                ReadOnly = true,
+                MultiSelect = false,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
+            };
+
+            dgvRevenueData.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "TransactionId", HeaderText = "Mã GD" });
+            dgvRevenueData.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "TransactionDate", HeaderText = "Ngày giao dịch", DefaultCellStyle = { Format = "dd/MM/yyyy HH:mm" } });
+            dgvRevenueData.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "BranchName", HeaderText = "Chi nhánh" });
+            dgvRevenueData.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "CustomerName", HeaderText = "Khách hàng" });
+            dgvRevenueData.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Amount", HeaderText = "Số tiền (₫)", DefaultCellStyle = { Format = "N0" } });
+            dgvRevenueData.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "PaymentMethod", HeaderText = "Phương thức TT" });
+
+            bindingSource.DataSource = resultList;
+            dgvRevenueData.DataSource = bindingSource;
+
+            mainLayout.Controls.Add(dgvRevenueData, 0, 2);
+        }
+
+        // 1. Xử lý Thống kê bất đồng bộ bằng async/await & Task.Run
+        private async void BtnAnalyze_Click(object? sender, EventArgs e)
+        {
+            // Khởi tạo CancellationTokenSource mới cho tác vụ
+            cts = new CancellationTokenSource();
+
+            // Cập nhật trạng thái UI
+            btnAnalyze.Enabled = false;
+            btnCancel.Enabled = true;
+            pgbLoading.Value = 0;
+            lblProcessingStatus.ForeColor = Color.Blue;
+            lblProcessingStatus.Text = "Đang kết nối cơ sở dữ liệu và truy xuất bản ghi...";
+
+            // Làm sạch kết quả cũ
+            resultList.Clear();
+
+            // Tạo Progress đối tượng để Background Thread báo cáo trạng thái an toàn lên UI Thread
+            var progress = new Progress<ProgressReport>(report =>
+            {
+                pgbLoading.Value = report.Percentage;
+                lblProcessingStatus.Text = report.StatusMessage;
+            });
+
+            string selectedBranch = cmbBranch.SelectedItem?.ToString() ?? "Tất cả chi nhánh";
+            DateTime fromDate = dtpFromDate.Value.Date;
+            DateTime toDate = dtpToDate.Value.Date;
+
+            try
+            {
+                // Đẩy tác vụ nặng xuống Background Thread bằng Task.Run và chờ kết quả bằng await
+                List<RevenueTransaction> data = await Task.Run(() => FetchAndAggregateData(selectedBranch, fromDate, toDate, progress, cts.Token), cts.Token);
+
+                // Nạp kết quả lên lưới hiển thị
+                foreach (var item in data)
+                {
+                    resultList.Add(item);
+                }
+
+                lblProcessingStatus.ForeColor = Color.Green;
+                lblProcessingStatus.Text = $"Thống kê thành công! Tổng số giao dịch: {resultList.Count} | Tổng doanh thu: {resultList.Sum(x => x.Amount):N0} ₫";
+            }
+            catch (OperationCanceledException)
+            {
+                // Xử lý khi người dùng nhấn Hủy
+                pgbLoading.Value = 0;
+                lblProcessingStatus.ForeColor = Color.Red;
+                lblProcessingStatus.Text = "Đã hủy thao tác thống kê!";
+            }
+            catch (Exception ex)
+            {
+                lblProcessingStatus.ForeColor = Color.Red;
+                lblProcessingStatus.Text = $"Lỗi trong quá trình xử lý: {ex.Message}";
+            }
+            finally
+            {
+                // Khôi phục trạng thái nút bấm
+                btnAnalyze.Enabled = true;
+                btnCancel.Enabled = false;
+                cts.Dispose();
+                cts = null;
+            }
+        }
+
+        // 2. Hủy tác vụ bất đồng bộ bằng CancellationTokenSource
+        private void BtnCancel_Click(object? sender, EventArgs e)
+        {
+            if (cts != null && !cts.IsCancellationRequested)
+            {
+                lblProcessingStatus.ForeColor = Color.OrangeRed;
+                lblProcessingStatus.Text = "Đang gửi yêu cầu hủy thao tác...";
+                cts.Cancel(); // Ngắt tác vụ ngầm
+            }
+        }
+
+        // Tác vụ giả lập tổng hợp CSDL nặng (chạy ở Background Thread)
+        private List<RevenueTransaction> FetchAndAggregateData(string branch, DateTime from, DateTime to, IProgress<ProgressReport> progress, CancellationToken token)
+        {
+            var list = new List<RevenueTransaction>();
+            Random rand = new Random();
+
+            // Giả lập 5 giai đoạn xử lý tổng cộng mất 5 giây (mỗi giai đoạn 1s)
+            for (int i = 1; i <= 5; i++)
+            {
+                // Bắt buộc kiểm tra yêu cầu hủy
+                token.ThrowIfCancellationRequested();
+
+                // Giả lập tính toán/truy xuất nặng trong 1000ms
+                Thread.Sleep(1000);
+
+                int percent = i * 20;
+                string statusMsg = i switch
+                {
+                    1 => "Đang tải dữ liệu giao dịch từ máy chủ chi nhánh... (20%)",
+                    2 => "Đang tính toán tổng hợp chỉ số doanh thu... (40%)",
+                    3 => "Đang lọc điều kiện ngày và danh mục thanh toán... (60%)",
+                    4 => "Đang kiểm tra tính toàn vẹn của tập bản ghi... (80%)",
+                    5 => "Hoàn tất tổng hợp dữ liệu! Đang tải lên giao diện... (100%)",
+                    _ => $"Đang xử lý... ({percent}%)"
+                };
+
+                // Báo cáo tiến độ về UI Thread
+                progress.Report(new ProgressReport { Percentage = percent, StatusMessage = statusMsg });
+            }
+
+            token.ThrowIfCancellationRequested();
+
+            // Sinh dữ liệu mẫu ngẫu nhiên
+            string[] customers = { "Công ty CP Hoàng Gia", "Nguyễn Minh Châu", "Trần Quang Khải", "Tập đoàn Nam Long", "Phạm Quốc Bảo" };
+            string[] methods = { "Chuyển khoản ngân hàng", "Thẻ tín dụng", "Tiền mặt", "Ví Điện tử MoMo" };
+            string[] branches = { "Chi nhánh Hà Nội", "Chi nhánh TP.HCM", "Chi nhánh Đà Nẵng", "Chi nhánh Cần Thơ" };
+
+            int totalRecords = rand.Next(15, 30);
+            for (int i = 1; i <= totalRecords; i++)
+            {
+                string bName = branch == "Tất cả chi nhánh" ? branches[rand.Next(branches.Length)] : branch;
+                list.Add(new RevenueTransaction
+                {
+                    TransactionId = $"GD{10000 + i}",
+                    TransactionDate = from.AddDays(rand.Next(0, Math.Max(1, (int)(to - from).TotalDays))),
+                    BranchName = bName,
+                    CustomerName = customers[rand.Next(customers.Length)],
+                    Amount = rand.Next(500, 50000) * 1000,
+                    PaymentMethod = methods[rand.Next(methods.Length)]
+                });
+            }
+
+            return list;
+        }
+    }
+
+    // Điểm khởi chạy ứng dụng
+    static class Program
+    {
+        [STAThread]
+        static void Main()
+        {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new frmRevenueAnalytics());
+        }
+    }
+}
