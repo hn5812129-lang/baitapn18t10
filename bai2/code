@@ -1,0 +1,566 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Drawing;
+using System.IO;
+using System.Linq;
+using System.Windows.Forms;
+
+namespace BookManagerApp
+{
+    // Lớp dữ liệu Sách (BookModel) với các giá trị mặc định để tránh lỗi Nullable
+    public class BookModel : INotifyPropertyChanged
+    {
+        private string _bookId = string.Empty;
+        private string _title = string.Empty;
+        private string _author = string.Empty;
+        private int _quantity;
+        private decimal _price;
+        private string _coverImagePath = string.Empty;
+
+        public string BookId
+        {
+            get => _bookId;
+            set { _bookId = value; OnPropertyChanged(nameof(BookId)); }
+        }
+
+        public string Title
+        {
+            get => _title;
+            set { _title = value; OnPropertyChanged(nameof(Title)); }
+        }
+
+        public string Author
+        {
+            get => _author;
+            set { _author = value; OnPropertyChanged(nameof(Author)); }
+        }
+
+        public int Quantity
+        {
+            get => _quantity;
+            set { _quantity = value; OnPropertyChanged(nameof(Quantity)); }
+        }
+
+        public decimal Price
+        {
+            get => _price;
+            set { _price = value; OnPropertyChanged(nameof(Price)); }
+        }
+
+        public string CoverImagePath
+        {
+            get => _coverImagePath;
+            set { _coverImagePath = value; OnPropertyChanged(nameof(CoverImagePath)); }
+        }
+
+        public decimal TotalValue => Quantity * Price;
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+        protected void OnPropertyChanged(string propertyName)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+    }
+
+    public partial class frmBookManager : Form
+    {
+        private BindingList<BookModel> bookList = new BindingList<BookModel>();
+        private BindingSource bindingSource = new BindingSource();
+
+        // Các Controls trên giao diện
+        private TableLayoutPanel mainLayout = null!;
+        private GroupBox grpInputs = null!;
+        private TextBox txtBookId = null!;
+        private TextBox txtTitle = null!;
+        private TextBox txtAuthor = null!;
+        private TextBox txtQuantity = null!;
+        private TextBox txtPrice = null!;
+        private TextBox txtSearch = null!;
+        private PictureBox picBookCover = null!;
+        private Button btnBrowseImage = null!;
+        private Button btnAdd = null!;
+        private Button btnUpdate = null!;
+        private Button btnDelete = null!;
+        private Button btnClear = null!;
+        private DataGridView dgvBooks = null!;
+        private MenuStrip menuStrip = null!;
+        private ToolStrip toolStrip = null!;
+        private StatusStrip statusStrip = null!;
+        private ToolStripStatusLabel lblTotalBooks = null!;
+        private ToolStripStatusLabel lblTotalValue = null!;
+        private ToolStripStatusLabel lblTime = null!;
+
+        // Chỉ định rõ namespace của Windows Forms để tránh lỗi trùng lặp Timer[cite: 1]
+        private System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
+        private ErrorProvider errorProvider = new ErrorProvider();
+
+        private string currentCoverPath = string.Empty;
+
+        public frmBookManager()
+        {
+            InitializeComponentCustom();
+            LoadInitialData();
+        }
+
+        private void InitializeComponentCustom()
+        {
+            this.Text = "Hệ thống Quản lý Tài liệu Sách & Xuất Báo cáo Nhà sách";
+            this.Size = new System.Drawing.Size(1100, 750);
+            this.StartPosition = FormStartPosition.CenterScreen;
+
+            // 1. MenuStrip
+            menuStrip = new MenuStrip();
+            ToolStripMenuItem menuFile = new ToolStripMenuItem("File");
+            ToolStripMenuItem menuOpen = new ToolStripMenuItem("Mở file CSV...");
+            ToolStripMenuItem menuSave = new ToolStripMenuItem("Lưu file CSV...");
+            ToolStripMenuItem menuExit = new ToolStripMenuItem("Thoát");
+
+            menuOpen.Click += MenuOpen_Click;
+            menuSave.Click += MenuSave_Click;
+            menuExit.Click += (s, e) => this.Close();
+            menuFile.DropDownItems.AddRange(new ToolStripItem[] { menuOpen, menuSave, new ToolStripSeparator(), menuExit });
+
+            ToolStripMenuItem menuEdit = new ToolStripMenuItem("Edit");
+            ToolStripMenuItem menuAdd = new ToolStripMenuItem("Thêm mới");
+            ToolStripMenuItem menuDelete = new ToolStripMenuItem("Xóa sách");
+            ToolStripMenuItem menuSearch = new ToolStripMenuItem("Tìm kiếm");
+
+            menuAdd.Click += BtnAdd_Click;
+            menuDelete.Click += BtnDelete_Click;
+            menuSearch.Click += (s, e) => txtSearch.Focus();
+            menuEdit.DropDownItems.AddRange(new ToolStripItem[] { menuAdd, menuDelete, menuSearch });
+
+            menuStrip.Items.AddRange(new ToolStripItem[] { menuFile, menuEdit });
+            this.MainMenuStrip = menuStrip;
+            this.Controls.Add(menuStrip);
+
+            // 2. ToolStrip
+            toolStrip = new ToolStrip();
+            ToolStripButton tsbOpen = new ToolStripButton("Mở file");
+            ToolStripButton tsbSave = new ToolStripButton("Lưu file");
+            ToolStripButton tsbAdd = new ToolStripButton("Thêm mới");
+
+            tsbOpen.Click += MenuOpen_Click;
+            tsbSave.Click += MenuSave_Click;
+            tsbAdd.Click += BtnAdd_Click;
+
+            toolStrip.Items.AddRange(new ToolStripItem[] { tsbOpen, new ToolStripSeparator(), tsbSave, new ToolStripSeparator(), tsbAdd });
+            this.Controls.Add(toolStrip);
+
+            // 3. StatusStrip
+            statusStrip = new StatusStrip();
+            lblTotalBooks = new ToolStripStatusLabel("Tổng số đầu sách: 0  |  ");
+            lblTotalValue = new ToolStripStatusLabel("Tổng giá trị kho: 0 ₫  |  ");
+            lblTime = new ToolStripStatusLabel("");
+            statusStrip.Items.AddRange(new ToolStripItem[] { lblTotalBooks, lblTotalValue, lblTime });
+            this.Controls.Add(statusStrip);
+
+            // Timer
+            timer.Interval = 1000;
+            timer.Tick += (s, e) => { lblTime.Text = $"Thời gian: {DateTime.Now:dd/MM/yyyy HH:mm:ss}"; };
+            timer.Start();
+
+            // 4. Main TableLayoutPanel
+            mainLayout = new TableLayoutPanel();
+            mainLayout.Dock = DockStyle.Fill;
+            mainLayout.ColumnCount = 1;
+            mainLayout.RowCount = 3;
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 240f));
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 55f));
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            this.Controls.Add(mainLayout);
+            mainLayout.BringToFront();
+
+            // --- VÙNG 1 ---
+            grpInputs = new GroupBox { Text = "Thông tin chi tiết sách", Dock = DockStyle.Fill };
+            TableLayoutPanel inputAndCoverLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 };
+            inputAndCoverLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 75f));
+            inputAndCoverLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25f));
+
+            TableLayoutPanel formPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 3, Padding = new Padding(3) };
+
+            formPanel.Controls.Add(new Label { Text = "Mã sách:", Anchor = AnchorStyles.Left }, 0, 0);
+            txtBookId = new TextBox { Dock = DockStyle.Fill };
+            formPanel.Controls.Add(txtBookId, 1, 0);
+
+            formPanel.Controls.Add(new Label { Text = "Tên sách:", Anchor = AnchorStyles.Left }, 2, 0);
+            txtTitle = new TextBox { Dock = DockStyle.Fill };
+            formPanel.Controls.Add(txtTitle, 3, 0);
+
+            formPanel.Controls.Add(new Label { Text = "Tác giả:", Anchor = AnchorStyles.Left }, 0, 1);
+            txtAuthor = new TextBox { Dock = DockStyle.Fill };
+            formPanel.Controls.Add(txtAuthor, 1, 1);
+
+            formPanel.Controls.Add(new Label { Text = "Số lượng:", Anchor = AnchorStyles.Left }, 2, 1);
+            txtQuantity = new TextBox { Dock = DockStyle.Fill };
+            formPanel.Controls.Add(txtQuantity, 3, 1);
+
+            formPanel.Controls.Add(new Label { Text = "Đơn giá:", Anchor = AnchorStyles.Left }, 0, 2);
+            txtPrice = new TextBox { Dock = DockStyle.Fill };
+            formPanel.Controls.Add(txtPrice, 1, 2);
+
+            FlowLayoutPanel btnPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
+            btnClear = new Button { Text = "Làm mới", Width = 75 };
+            btnDelete = new Button { Text = "Xóa", Width = 65 };
+            btnUpdate = new Button { Text = "Cập nhật", Width = 75 };
+            btnAdd = new Button { Text = "Thêm mới", Width = 80 };
+
+            btnAdd.Click += BtnAdd_Click;
+            btnUpdate.Click += BtnUpdate_Click;
+            btnDelete.Click += BtnDelete_Click;
+            btnClear.Click += BtnClear_Click;
+
+            btnPanel.Controls.AddRange(new Control[] { btnClear, btnDelete, btnUpdate, btnAdd });
+
+            TableLayoutPanel leftContainer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
+            leftContainer.RowStyles.Add(new RowStyle(SizeType.Percent, 75f));
+            leftContainer.RowStyles.Add(new RowStyle(SizeType.Percent, 25f));
+            leftContainer.Controls.Add(formPanel, 0, 0);
+            leftContainer.Controls.Add(btnPanel, 0, 1);
+
+            TableLayoutPanel rightContainer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(3) };
+            rightContainer.RowStyles.Add(new RowStyle(SizeType.Percent, 80f));
+            rightContainer.RowStyles.Add(new RowStyle(SizeType.Percent, 20f));
+
+            picBookCover = new PictureBox
+            {
+                Dock = DockStyle.Fill,
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = Color.WhiteSmoke
+            };
+
+            btnBrowseImage = new Button { Text = "Tải ảnh bìa...", Dock = DockStyle.Fill };
+            btnBrowseImage.Click += BtnBrowseImage_Click;
+
+            rightContainer.Controls.Add(picBookCover, 0, 0);
+            rightContainer.Controls.Add(btnBrowseImage, 0, 1);
+
+            inputAndCoverLayout.Controls.Add(leftContainer, 0, 0);
+            inputAndCoverLayout.Controls.Add(rightContainer, 1, 0);
+
+            grpInputs.Controls.Add(inputAndCoverLayout);
+            mainLayout.Controls.Add(grpInputs, 0, 0);
+
+            // --- VÙNG 2 ---
+            GroupBox grpSearch = new GroupBox { Text = "Tìm kiếm nhanh", Dock = DockStyle.Fill };
+            FlowLayoutPanel searchPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(3) };
+            txtSearch = new TextBox { Width = 250, Text = "Nhập mã hoặc tên sách...", ForeColor = Color.Gray };
+            txtSearch.Enter += (s, e) => { if (txtSearch.Text == "Nhập mã hoặc tên sách...") { txtSearch.Text = ""; txtSearch.ForeColor = Color.Black; } };
+            txtSearch.Leave += (s, e) => { if (string.IsNullOrWhiteSpace(txtSearch.Text)) { txtSearch.Text = "Nhập mã hoặc tên sách..."; txtSearch.ForeColor = Color.Gray; } };
+            txtSearch.TextChanged += TxtSearch_TextChanged;
+
+            searchPanel.Controls.AddRange(new Control[] { new Label { Text = "Từ khóa:", Padding = new Padding(0, 5, 0, 0) }, txtSearch });
+            grpSearch.Controls.Add(searchPanel);
+            mainLayout.Controls.Add(grpSearch, 0, 1);
+
+            // --- VÙNG 3 ---
+            dgvBooks = new DataGridView();
+            dgvBooks.Dock = DockStyle.Fill;
+            dgvBooks.AutoGenerateColumns = false;
+            dgvBooks.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            dgvBooks.MultiSelect = false;
+            dgvBooks.ReadOnly = true;
+            dgvBooks.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+
+            dgvBooks.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "BookId", HeaderText = "Mã sách" });
+            dgvBooks.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Title", HeaderText = "Tên sách" });
+            dgvBooks.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Author", HeaderText = "Tác giả" });
+            dgvBooks.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Quantity", HeaderText = "Số lượng", DefaultCellStyle = { Format = "N0" } });
+            dgvBooks.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Price", HeaderText = "Đơn giá", DefaultCellStyle = { Format = "N0" } });
+            dgvBooks.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "TotalValue", HeaderText = "Thành tiền", DefaultCellStyle = { Format = "N0" } });
+            dgvBooks.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "CoverImagePath", HeaderText = "Ảnh bìa (Đường dẫn)" });
+
+            dgvBooks.CellClick += DgvBooks_CellClick;
+            mainLayout.Controls.Add(dgvBooks, 0, 2);
+        }
+
+        private void LoadInitialData()
+        {
+            var initialList = new List<BookModel>
+            {
+                new BookModel { BookId = "BK001", Title = "Lập trình C# cơ bản", Author = "Nguyễn Văn A", Quantity = 15, Price = 120000, CoverImagePath = "" },
+                new BookModel { BookId = "BK002", Title = "Cấu trúc dữ liệu và giải thuật", Author = "Trần Văn B", Quantity = 10, Price = 150000, CoverImagePath = "" }
+            };
+
+            bookList = new BindingList<BookModel>(initialList);
+            bindingSource.DataSource = bookList;
+            dgvBooks.DataSource = bindingSource;
+            UpdateStatusStrip();
+        }
+
+        private void BtnBrowseImage_Click(object sender, EventArgs e)
+        {
+            using (OpenFileDialog ofd = new OpenFileDialog())
+            {
+                ofd.Filter = "Image Files (*.jpg;*.jpeg;*.png)|*.jpg;*.jpeg;*.png|All files (*.*)|*.*";
+                if (ofd.ShowDialog() == DialogResult.OK)
+                {
+                    currentCoverPath = ofd.FileName;
+                    try
+                    {
+                        picBookCover.Image = Image.FromFile(currentCoverPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"Không thể tải ảnh: {ex.Message}", "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            }
+        }
+
+        private bool ValidateInputs()
+        {
+            errorProvider.Clear();
+            bool isValid = true;
+
+            if (string.IsNullOrWhiteSpace(txtBookId.Text))
+            {
+                errorProvider.SetError(txtBookId, "Mã sách không được để trống.");
+                isValid = false;
+            }
+            if (string.IsNullOrWhiteSpace(txtTitle.Text))
+            {
+                errorProvider.SetError(txtTitle, "Tên sách không được để trống.");
+                isValid = false;
+            }
+            if (string.IsNullOrWhiteSpace(txtAuthor.Text))
+            {
+                errorProvider.SetError(txtAuthor, "Tác giả không được để trống.");
+                isValid = false;
+            }
+            if (!int.TryParse(txtQuantity.Text.Trim(), out int qty) || qty < 0)
+            {
+                errorProvider.SetError(txtQuantity, "Số lượng phải là số nguyên không âm.");
+                isValid = false;
+            }
+            if (!decimal.TryParse(txtPrice.Text.Trim(), out decimal price) || price < 0)
+            {
+                errorProvider.SetError(txtPrice, "Đơn giá phải là số không âm.");
+                isValid = false;
+            }
+
+            return isValid;
+        }
+
+        private void BtnAdd_Click(object sender, EventArgs e)
+        {
+            if (!ValidateInputs()) return;
+
+            if (bookList.Any(x => x.BookId.Equals(txtBookId.Text.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                MessageBox.Show("Mã sách đã tồn tại!", "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            var newBook = new BookModel
+            {
+                BookId = txtBookId.Text.Trim(),
+                Title = txtTitle.Text.Trim(),
+                Author = txtAuthor.Text.Trim(),
+                Quantity = int.Parse(txtQuantity.Text.Trim()),
+                Price = decimal.Parse(txtPrice.Text.Trim()),
+                CoverImagePath = currentCoverPath
+            };
+
+            bookList.Add(newBook);
+            UpdateStatusStrip();
+            ClearForm();
+            MessageBox.Show("Thêm sách thành công!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void BtnUpdate_Click(object sender, EventArgs e)
+        {
+            if (dgvBooks.SelectedRows.Count == 0)
+            {
+                MessageBox.Show("Vui lòng chọn sách cần cập nhật trên lưới.", "Cảnh báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (!ValidateInputs()) return;
+
+            var selectedBook = (BookModel)dgvBooks.SelectedRows[0].DataBoundItem;
+            selectedBook.Title = txtTitle.Text.Trim();
+            selectedBook.Author = txtAuthor.Text.Trim();
+            selectedBook.Quantity = int.Parse(txtQuantity.Text.Trim());
+            selectedBook.Price = decimal.Parse(txtPrice.Text.Trim());
+            selectedBook.CoverImagePath = currentCoverPath;
+
+            bindingSource.ResetBindings(false);
+            UpdateStatusStrip();
+            MessageBox.Show("Cập nhật sách thành công!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void BtnDelete_Click(object sender, EventArgs e)
+        {
+            if (dgvBooks.SelectedRows.Count == 0)
+            {
+                MessageBox.Show("Vui lòng chọn sách cần xóa trên lưới.", "Cảnh báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var confirm = MessageBox.Show("Bạn có chắc chắn muốn xóa đầu sách này?", "Xác nhận xóa", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (confirm == DialogResult.Yes)
+            {
+                var selectedBook = (BookModel)dgvBooks.SelectedRows[0].DataBoundItem;
+                bookList.Remove(selectedBook);
+                UpdateStatusStrip();
+                ClearForm();
+                MessageBox.Show("Đã xóa sách thành công!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+
+        private void BtnClear_Click(object sender, EventArgs e)
+        {
+            ClearForm();
+            dgvBooks.ClearSelection();
+        }
+
+        private void ClearForm()
+        {
+            txtBookId.Clear();
+            txtTitle.Clear();
+            txtAuthor.Clear();
+            txtQuantity.Clear();
+            txtPrice.Clear();
+            txtBookId.Enabled = true;
+            currentCoverPath = string.Empty;
+            picBookCover.Image = null;
+            errorProvider.Clear();
+        }
+
+        private void DgvBooks_CellClick(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex >= 0)
+            {
+                var book = (BookModel)dgvBooks.Rows[e.RowIndex].DataBoundItem;
+                txtBookId.Text = book.BookId;
+                txtBookId.Enabled = false;
+                txtTitle.Text = book.Title;
+                txtAuthor.Text = book.Author;
+                txtQuantity.Text = book.Quantity.ToString();
+                txtPrice.Text = book.Price.ToString("0");
+
+                currentCoverPath = book.CoverImagePath;
+                if (!string.IsNullOrEmpty(currentCoverPath) && File.Exists(currentCoverPath))
+                {
+                    try { picBookCover.Image = Image.FromFile(currentCoverPath); }
+                    catch { picBookCover.Image = null; }
+                }
+                else
+                {
+                    picBookCover.Image = null;
+                }
+                errorProvider.Clear();
+            }
+        }
+
+        private void TxtSearch_TextChanged(object sender, EventArgs e)
+        {
+            string keyword = txtSearch.Text.Trim().ToLower();
+            if (keyword == "nhập mã hoặc tên sách..." || string.IsNullOrEmpty(keyword))
+            {
+                bindingSource.DataSource = bookList;
+            }
+            else
+            {
+                var filtered = bookList.Where(x => x.BookId.ToLower().Contains(keyword) || x.Title.ToLower().Contains(keyword)).ToList();
+                bindingSource.DataSource = new BindingList<BookModel>(filtered);
+            }
+            UpdateStatusStrip();
+        }
+
+        private void MenuSave_Click(object sender, EventArgs e)
+        {
+            using (SaveFileDialog sfd = new SaveFileDialog())
+            {
+                sfd.Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*";
+                sfd.FileName = $"DanhSachSach_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
+
+                if (sfd.ShowDialog() == DialogResult.OK)
+                {
+                    try
+                    {
+                        using (StreamWriter sw = new StreamWriter(sfd.FileName, false, System.Text.Encoding.UTF8))
+                        {
+                            sw.WriteLine("BookId,Title,Author,Quantity,Price,CoverImagePath");
+                            foreach (var item in bookList)
+                            {
+                                sw.WriteLine($"\"{item.BookId}\",\"{item.Title}\",\"{item.Author}\",{item.Quantity},{item.Price},\"{item.CoverImagePath}\"");
+                            }
+                        }
+                        MessageBox.Show("Lưu file CSV thành công!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"Lỗi khi lưu file: {ex.Message}", "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            }
+        }
+
+        private void MenuOpen_Click(object sender, EventArgs e)
+        {
+            using (OpenFileDialog ofd = new OpenFileDialog())
+            {
+                ofd.Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*";
+                if (ofd.ShowDialog() == DialogResult.OK)
+                {
+                    try
+                    {
+                        var lines = File.ReadAllLines(ofd.FileName, System.Text.Encoding.UTF8);
+                        var loadedList = new List<BookModel>();
+
+                        for (int i = 1; i < lines.Length; i++)
+                        {
+                            if (string.IsNullOrWhiteSpace(lines[i])) continue;
+
+                            var parts = lines[i].Split(new string[] { "\",\"" }, StringSplitOptions.None);
+                            if (parts.Length >= 6)
+                            {
+                                string id = parts[0].Trim('"');
+                                string title = parts[1].Trim('"');
+                                string author = parts[2].Trim('"');
+                                int.TryParse(parts[3], out int qty);
+                                decimal.TryParse(parts[4], out decimal price);
+                                string img = parts[5].Trim('"');
+
+                                loadedList.Add(new BookModel { BookId = id, Title = title, Author = author, Quantity = qty, Price = price, CoverImagePath = img });
+                            }
+                        }
+
+                        bookList = new BindingList<BookModel>(loadedList);
+                        bindingSource.DataSource = bookList;
+                        UpdateStatusStrip();
+                        MessageBox.Show("Mở file CSV thành công!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"Lỗi khi đọc file: {ex.Message}", "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            }
+        }
+
+        private void UpdateStatusStrip()
+        {
+            int totalBooksCount = bookList.Count;
+            decimal totalWarehouseValue = bookList.Sum(x => x.TotalValue);
+
+            lblTotalBooks.Text = $"Tổng số đầu sách: {totalBooksCount}  |  ";
+            lblTotalValue.Text = $"Tổng giá trị kho: {totalWarehouseValue:N0} ₫  |  ";
+        }
+    }
+
+    static class Program
+    {
+        [STAThread]
+        static void Main()
+        {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new frmBookManager());
+        }
+    }
+}
